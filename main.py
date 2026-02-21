@@ -78,64 +78,56 @@ except Exception as e:
 if not data:
     exit(1)
 
-fully_supported = []
-partially_supported = []
+checked_instances = {}
 
 cancel = False
 sorted_instances = sorted([d for d in data["instances"] if d["users"] is not None], key=lambda d: d['users'], reverse=True)
 for instance in sorted_instances:
+    domain = instance["name"]
+    checked_instances[domain] = {
+        "unblock_score": 0
+    }
     if cancel == True:
         break
-    domain = instance["name"]
-    print(f"[ ] Checking {domain} ...", end="")
-
-    succsesses = 0
 
     for unblocked_domain in domains.keys():
+        print(f"[ ] Checking {unblocked_domain} -> {domain} ... ", end="")
         # Makes no sense to check towards itself
         if unblocked_domain == domain:
+            checked_instances[domain]["unblock_score"] += 1
+            print(f"\r[✓]")
             continue
 
         username = domains[unblocked_domain]
         url = f"https://{domain}/api/v1/accounts/lookup?acct={username}%40{unblocked_domain}"
-        print(f" Testing {url}", end="")
 
         try:
             response = requests.get(url, timeout=15, allow_redirects=True)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            print(f"\r[x] Checking {domain} ... Response failed" + " "*(len(url)+9))
+            print(f"Response failed\r[x]" )
             continue
         except KeyboardInterrupt as e:
-            print("Cancelling the rest, and finishing...")
+            print("Cancelling the rest, and finishing...\r[-]")
             cancel = True
             break
 
         if not is_json(response.text):
-            print(f"\r[x] Checking {domain} ...  Response not a JSON" + " "*(len(url)+9))
+            print(f"Response not a JSON\r[x]")
             continue
 
         json_resp = response.json()
-        if "username" not in json_resp:
-            print(f"\r[x] Checking {domain} ...  \"username\" key missing in JSON response" + " "*(len(url)+9))
+        if "acct" not in json_resp:
+            print(f"\"acct\" key missing in JSON response\r[x]")
             continue
-        if json_resp["username"] != username:
-            print(f"\r[x] Checking {domain} ...  username not equal to supposed username" + " "*(len(url)+9))
+        if json_resp["acct"].lower() != f"{username}@{unblocked_domain}":
+            print(f"acct not equal to supposed acct, {json_resp['acct'].lower()} != {username}@{unblocked_domain}\r[x]")
             continue
 
-        succsesses += 1
-        print(f"\r[✓] Checking {domain} ..." + " "*(len(url)+9))
+        checked_instances[domain]["unblock_score"] += 1
+        print(f"\r[✓]")
 
-    if succsesses == len(domains):
-        fully_supported.append(domain)
-    if succsesses > 0:
-        partially_supported.append(domain)
-
-
-print("\n\nFully supported Mastodon instanced:")
-for domain in fully_supported:
-    print("  " + domain)
-
-print("\nPartially supported Mastodon instanced:")
-for domain in partially_supported:
-    print("  " + domain)
+print("\n\nResult")
+filtered_instances = sorted([{"domain": domain, **scores} for domain, scores in data.items()], key=lambda x: x["unblock_score"], reverse=True)
+for instance in filtered_instances:
+    print(f"{instance['unblock_score']} {instance['domain']}")
