@@ -6,12 +6,42 @@ import time
 import requests
 from datetime import datetime
 
+
 def is_json(myjson):
   try:
     json.loads(myjson)
   except ValueError as e:
     return False
   return True
+
+
+def get_random_username(domain):
+    """
+    Given a Mastodon compatible domain, it will find a random username on that instance
+    """
+    try:
+        response = requests.get(f"https://{domain}/api/v2/instance", timeout=20)
+        response.raise_for_status()
+        data = response.json()
+        if "contact" in data and "account" in data["contact"] and "username" in data["contact"]["account"] and type(data["contact"]["account"]["username"]) == str:
+            return data["contact"]["account"]["username"]
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed towards {domain}: {e}")
+
+    try:
+        response = requests.get(f"https://{domain}/api/v1/timelines/public?local=true&only_media=false&with_muted=true&limit=20", timeout=20)
+        response.raise_for_status()
+        data = response.json()
+        if len(data) > 0:
+            for post in data:
+                if "account" in post and "acct" in post["account"] and type(post["account"]["acct"]) == str:
+                    return post["account"]["acct"]
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed towards {domain}: {e}")
+
+    return None
+
+
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 json_path = os.path.join(script_dir, "list.json")
@@ -34,10 +64,10 @@ if not os.path.exists(json_path):
 
 print("Which Mastodon instances should not be banned?")
 print("Please provide the domain of the Mastodon instances, press <ENTER> without entering any value when done")
-domains = {}
+domains = []
 while True:
     if len(domains) > 0:
-        print("Added to unblock list: " + ", ".join(domains))
+        print("Added to unblock list: " + ", ".join([d["name"] for d in domains]))
     domain = input("> ")
     domain = domain.strip()
     if domain == "":
@@ -46,28 +76,22 @@ while True:
         print("Unblock list cannot be empty")
     if " " in domain:
         for value in domain.split():
-            domains[value] = None
+            domains.append({"name": value})
     else:
-        domains[domain] = None
+        domains.append({"name": domain})
 
 # Get an endpoint to cross test unblocked domains
-for domain in domains.keys():
-    try:
-        print(f"Trying to locate random user from: {domain} ...")
-        response = requests.get(f"https://{domain}/api/v2/instance", timeout=20)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed towards {domain}: {e}")
-        print(f"Skipping {domain}")
-        continue
-    data = response.json()
-    if "contact" in data and "account" in data["contact"] and "username" in data["contact"]["account"] and type(data["contact"]["account"]["username"]) == str:
-        print("Found contact: " + data["contact"]["account"]["username"])
-        domains[domain] = data["contact"]["account"]["username"]
+i = -1
+for domain in domains:
+    i += 1
+    print(f"Trying to locate random user from: {domain['name']} ...")
+    username = get_random_username(domain["name"])
+    if username is not None:
+        domains[i]["username"] = username
     else:
         print("Found no users")
-        print(f"Skipping {domain}")
-        continue
+        print(f"Skipping {domain['name']}")
+
 
 # Now test literally every single other Mastodon instance, and see if these users on these instances are not found.
 try:
@@ -85,6 +109,7 @@ cancel = False
 sorted_instances = sorted([d for d in data["instances"] if d["users"] is not None], key=lambda d: d['users'], reverse=True)
 for instance in sorted_instances:
     domain = instance["name"]
+    #checked_instances[domain] = test_domain()
     checked_instances[domain] = {
         "unblock_score": 0,
         "elapsed": 99.99
@@ -92,16 +117,16 @@ for instance in sorted_instances:
     if cancel == True:
         break
 
-    for unblocked_domain in domains.keys():
-        print(f"[ ] Checking {unblocked_domain} -> {domain} ... ", end="")
+    for unblocked_domain in domains:
+        print(f"[ ] Checking {unblocked_domain['name']} -> {domain} ... ", end="")
         # Makes no sense to check towards itself
-        if unblocked_domain == domain:
+        if unblocked_domain["name"] == domain:
             checked_instances[domain]["unblock_score"] += 1
             print(f"\r[✓]")
             continue
 
-        username = domains[unblocked_domain]
-        url = f"https://{domain}/api/v1/accounts/lookup?acct={username}%40{unblocked_domain}"
+        username = unblocked_domain["username"]
+        url = f"https://{domain}/api/v1/accounts/lookup?acct={username}%40{unblocked_domain['name']}"
 
         try:
             start = time.time()
@@ -124,8 +149,8 @@ for instance in sorted_instances:
         if "acct" not in json_resp:
             print(f"\"acct\" key missing in JSON response\r[x]")
             continue
-        if json_resp["acct"].lower() != f"{username}@{unblocked_domain}":
-            print(f"acct not equal to supposed acct, {json_resp['acct'].lower()} != {username}@{unblocked_domain}\r[x]")
+        if json_resp["acct"].lower() != f"{username}@{unblocked_domain['name']}":
+            print(f"acct not equal to supposed acct, {json_resp['acct'].lower()} != {username}@{unblocked_domain['name']}\r[x]")
             continue
 
         checked_instances[domain]["unblock_score"] += 1
