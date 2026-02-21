@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 import requests
 from datetime import datetime
 
@@ -85,7 +86,8 @@ sorted_instances = sorted([d for d in data["instances"] if d["users"] is not Non
 for instance in sorted_instances:
     domain = instance["name"]
     checked_instances[domain] = {
-        "unblock_score": 0
+        "unblock_score": 0,
+        "elapsed": 99.99
     }
     if cancel == True:
         break
@@ -102,8 +104,10 @@ for instance in sorted_instances:
         url = f"https://{domain}/api/v1/accounts/lookup?acct={username}%40{unblocked_domain}"
 
         try:
+            start = time.time()
             response = requests.get(url, timeout=15, allow_redirects=True)
             response.raise_for_status()
+            checked_instances[domain]["elapsed"] = time.time() - start
         except requests.exceptions.RequestException as e:
             print(f"Response failed\r[x]" )
             continue
@@ -128,6 +132,6 @@ for instance in sorted_instances:
         print(f"\r[✓]")
 
 print("\n\nResult")
-filtered_instances = sorted([{"domain": domain, **scores} for domain, scores in data.items()], key=lambda x: x["unblock_score"], reverse=True)
+filtered_instances = sorted([{"domain": domain, **scores} for domain, scores in checked_instances.items()], key=lambda x: (-x["unblock_score"], x["elapsed"]))
 for instance in filtered_instances:
-    print(f"{instance['unblock_score']} {instance['domain']}")
+    print(f"{instance['unblock_score']} - {round(instance['elapsed']*1000)}ms {instance['domain']}")
